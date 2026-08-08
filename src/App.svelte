@@ -4,12 +4,19 @@
 	import ColonyPanel from './lib/components/ColonyPanel.svelte';
 	import ColonyToast from './lib/components/ColonyToast.svelte';
 	import PlacementWarningToast from './lib/components/PlacementWarningToast.svelte';
-	import type { Colony, OrbitStatus } from './lib/types/game';
+	import ColonyConfirmModal from './lib/components/ColonyConfirmModal.svelte';
+	import BottomDock from './lib/components/BottomDock.svelte';
+	import type { Colony, OrbitStatus, PlanetControls } from './lib/types/game';
 
 	let colonies: Colony[] = $state([]);
 	let selectedColonyId: string | null = $state(null);
 	let orbitStatus: OrbitStatus | null = $state(null);
 	let ready = $state(false);
+	// Plain functions only (see PlanetControls) — safe to hold in $state
+	// since no Babylon Scene/Mesh/Material ever flows through it.
+	let planetControls: PlanetControls | null = $state(null);
+	let scanTrigger: { durationMs: number; id: number } | null = $state(null);
+	let scanTriggerCounter = 0;
 
 	let toastColony: Colony | null = $state(null);
 	let toastVisible = $state(false);
@@ -18,6 +25,10 @@
 	let placementWarning: string | null = $state(null);
 	let placementWarningVisible = $state(false);
 	let placementWarningTimeout: ReturnType<typeof setTimeout> | undefined;
+
+	// Candidate LAND point awaiting player confirmation via ColonyConfirmModal
+	// — nothing is spawned in PlanetEngine until the player confirms.
+	let pendingColonyLocation: { x: number; y: number; z: number } | null = $state(null);
 
 	let selectedColony = $derived(colonies.find((c) => c.id === selectedColonyId) ?? null);
 	let panelOpen = $derived(selectedColony !== null);
@@ -50,6 +61,25 @@
 		}, 2500);
 	}
 
+	function handleScanTriggered(durationMs: number) {
+		scanTriggerCounter += 1;
+		scanTrigger = { durationMs, id: scanTriggerCounter };
+	}
+
+	function handlePlacementPending(point: { x: number; y: number; z: number }) {
+		pendingColonyLocation = point;
+	}
+
+	function confirmColonyPlacement() {
+		if (!pendingColonyLocation || !planetControls) return;
+		planetControls.placeColony(pendingColonyLocation);
+		pendingColonyLocation = null;
+	}
+
+	function cancelColonyPlacement() {
+		pendingColonyLocation = null;
+	}
+
 	function closePanel() {
 		selectedColonyId = null;
 	}
@@ -69,7 +99,10 @@
 		onColonySelected={handleColonySelected}
 		onOrbitStatusChanged={handleOrbitStatusChanged}
 		onPlacementDenied={handlePlacementDenied}
+		onPlacementPending={handlePlacementPending}
 		onReady={() => (ready = true)}
+		onEngineReady={(controls) => (planetControls = controls)}
+		onScanTriggered={handleScanTriggered}
 	/>
 
 	<HudOverlay {orbitStatus} colonyCount={colonies.length} {ready} />
@@ -79,4 +112,12 @@
 	<ColonyToast colony={toastColony} visible={toastVisible} />
 
 	<PlacementWarningToast message={placementWarning} visible={placementWarningVisible} />
+
+	<ColonyConfirmModal
+		open={pendingColonyLocation !== null}
+		onConfirm={confirmColonyPlacement}
+		onCancel={cancelColonyPlacement}
+	/>
+
+	<BottomDock {planetControls} {ready} {scanTrigger} />
 </main>

@@ -9,6 +9,84 @@
  * the mask is generated independently of whatever image ends up on screen.
  */
 
+import { PlanetType } from '../types/game';
+
+type RGB = [number, number, number];
+
+interface BiomePalette {
+	basin: RGB;
+	dustPlain: RGB;
+	rustPlain: RGB;
+	canyon: RGB;
+	basalt: RGB;
+	mineralPeak: RGB;
+	liquid: RGB;
+	liquidEdge: RGB;
+	/** Elevation above which liquid can never appear (mountains stay dry). */
+	liquidElevationMax: number;
+	/** Higher = liquid pools rarer/smaller; lower = broad ocean coverage. */
+	liquidPoolThreshold: number;
+}
+
+/** Per-dominant-surface color/coverage pools. `terrainElevation` itself stays
+ *  shared across types — only the palette and how much of the low/mid
+ *  elevation band counts as LIQUID differ. */
+const BIOME_PALETTES: Record<PlanetType, BiomePalette> = {
+	[PlanetType.Desert]: {
+		basin: [46, 32, 26],
+		dustPlain: [120, 82, 56],
+		rustPlain: [150, 74, 42],
+		canyon: [98, 50, 32],
+		basalt: [42, 37, 35],
+		mineralPeak: [150, 138, 148],
+		liquid: [36, 122, 104],
+		liquidEdge: [64, 96, 70],
+		liquidElevationMax: 0.24,
+		liquidPoolThreshold: 0.78
+	},
+	[PlanetType.Grassy]: {
+		basin: [28, 40, 22],
+		dustPlain: [86, 112, 48],
+		rustPlain: [64, 96, 40],
+		canyon: [54, 70, 34],
+		basalt: [40, 48, 36],
+		mineralPeak: [206, 214, 198],
+		liquid: [34, 96, 128],
+		liquidEdge: [58, 118, 132],
+		liquidElevationMax: 0.36,
+		liquidPoolThreshold: 0.56
+	},
+	[PlanetType.Water]: {
+		basin: [10, 34, 64],
+		dustPlain: [18, 66, 104],
+		rustPlain: [180, 168, 128],
+		canyon: [96, 82, 58],
+		basalt: [52, 48, 46],
+		mineralPeak: [232, 236, 240],
+		liquid: [12, 56, 96],
+		liquidEdge: [24, 84, 118],
+		liquidElevationMax: 0.52,
+		liquidPoolThreshold: 0.34
+	},
+	[PlanetType.Mixed]: {
+		basin: [40, 46, 34],
+		dustPlain: [104, 96, 58],
+		rustPlain: [110, 84, 48],
+		canyon: [80, 62, 40],
+		basalt: [44, 42, 40],
+		mineralPeak: [190, 192, 186],
+		liquid: [24, 90, 118],
+		liquidEdge: [46, 110, 124],
+		liquidElevationMax: 0.32,
+		liquidPoolThreshold: 0.63
+	}
+};
+
+export function randomPlanetType(): PlanetType {
+	const types = Object.values(PlanetType);
+	return types[Math.floor(Math.random() * types.length)];
+}
+
 // Cheap deterministic value-noise (no deps): sum of sine lattices at
 // increasing frequency, seeded so re-renders are stable.
 function hash2(x: number, y: number, seed: number): number {
@@ -60,9 +138,6 @@ export function terrainElevation(u: number, v: number, seed: number): number {
 	return n;
 }
 
-const LIQUID_ELEVATION_MAX = 0.32;
-const LIQUID_POOL_THRESHOLD = 0.63;
-
 function liquidPoolNoise(u: number, v: number, seed: number): number {
 	const angle = u * Math.PI * 2;
 	const wx = (Math.cos(angle) * 0.5 + 0.5) * 14;
@@ -70,36 +145,29 @@ function liquidPoolNoise(u: number, v: number, seed: number): number {
 	return fbm(wx, wz + v * 14, seed + 900, 3);
 }
 
-/** True where a rare toxic liquid pool sits inside a low-lying basin. */
-export function isLiquidAt(u: number, v: number, seed: number): boolean {
+/** True where a liquid pool sits inside a low-lying basin. Coverage is
+ *  driven entirely by the biome palette's thresholds — a Water world and a
+ *  Desert world share the same elevation field, just classify it differently. */
+export function isLiquidAt(u: number, v: number, seed: number, palette: BiomePalette): boolean {
 	const elevation = terrainElevation(u, v, seed);
-	if (elevation >= LIQUID_ELEVATION_MAX) return false;
-	return liquidPoolNoise(u, v, seed) > LIQUID_POOL_THRESHOLD;
+	if (elevation >= palette.liquidElevationMax) return false;
+	return liquidPoolNoise(u, v, seed) > palette.liquidPoolThreshold;
 }
 
 export function drawProceduralDiffuse(
 	ctx: CanvasRenderingContext2D,
 	size: number,
-	seed = 1337
+	seed = 1337,
+	planetType: PlanetType = PlanetType.Mixed
 ) {
+	const palette = BIOME_PALETTES[planetType];
 	const w = size;
 	const h = size / 2;
 	const img = ctx.createImageData(w, h);
-	const basin: [number, number, number] = [46, 32, 26];
-	const dustPlain: [number, number, number] = [120, 82, 56];
-	const rustPlain: [number, number, number] = [150, 74, 42];
-	const canyon: [number, number, number] = [98, 50, 32];
-	const basalt: [number, number, number] = [42, 37, 35];
-	const mineralPeak: [number, number, number] = [150, 138, 148];
-	const toxicPool: [number, number, number] = [36, 122, 104];
-	const toxicPoolEdge: [number, number, number] = [64, 96, 70];
+	const { basin, dustPlain, rustPlain, canyon, basalt, mineralPeak, liquid, liquidEdge } = palette;
 
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-	const mix = (
-		c1: [number, number, number],
-		c2: [number, number, number],
-		t: number
-	): [number, number, number] => [
+	const mix = (c1: RGB, c2: RGB, t: number): RGB => [
 		lerp(c1[0], c2[0], t),
 		lerp(c1[1], c2[1], t),
 		lerp(c1[2], c2[2], t)
@@ -110,7 +178,7 @@ export function drawProceduralDiffuse(
 		for (let x = 0; x < w; x++) {
 			const u = x / w;
 			const n = terrainElevation(u, v, seed);
-			let color: [number, number, number];
+			let color: RGB;
 
 			if (n < 0.22) {
 				color = basin;
@@ -126,9 +194,9 @@ export function drawProceduralDiffuse(
 				color = mix(basalt, mineralPeak, (n - 0.88) / 0.12);
 			}
 
-			if (isLiquidAt(u, v, seed)) {
-				const edgeT = Math.min(1, liquidPoolNoise(u, v, seed) - LIQUID_POOL_THRESHOLD) * 6;
-				color = mix(toxicPoolEdge, toxicPool, Math.min(1, edgeT));
+			if (isLiquidAt(u, v, seed, palette)) {
+				const edgeT = Math.min(1, liquidPoolNoise(u, v, seed) - palette.liquidPoolThreshold) * 6;
+				color = mix(liquidEdge, liquid, Math.min(1, edgeT));
 			}
 
 			const idx = (y * w + x) * 4;
@@ -180,7 +248,13 @@ export function drawProceduralNormal(
  * Binary LAND (white) / LIQUID (black) mask, read back pixel-by-pixel by
  * PlanetEngine to classify a click's UV without touching the visual texture.
  */
-export function drawTerrainMask(ctx: CanvasRenderingContext2D, size: number, seed: number) {
+export function drawTerrainMask(
+	ctx: CanvasRenderingContext2D,
+	size: number,
+	seed: number,
+	planetType: PlanetType = PlanetType.Mixed
+) {
+	const palette = BIOME_PALETTES[planetType];
 	const w = size;
 	const h = size / 2;
 	const img = ctx.createImageData(w, h);
@@ -188,7 +262,7 @@ export function drawTerrainMask(ctx: CanvasRenderingContext2D, size: number, see
 		const v = y / h;
 		for (let x = 0; x < w; x++) {
 			const u = x / w;
-			const value = isLiquidAt(u, v, seed) ? 0 : 255;
+			const value = isLiquidAt(u, v, seed, palette) ? 0 : 255;
 			const idx = (y * w + x) * 4;
 			img.data[idx] = value;
 			img.data[idx + 1] = value;

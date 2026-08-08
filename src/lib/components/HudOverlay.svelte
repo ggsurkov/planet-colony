@@ -45,6 +45,9 @@
 			<div class="mt-2 space-y-0.5 text-amber-400/80">
 				<div>ATMOSPHERE: <span class="text-amber-300">UNBREATHABLE (0.00 bar)</span></div>
 				<div>TERRAFORM INDEX: <span class="text-amber-300">0.0%</span></div>
+				{#if orbitStatus}
+					<div>SURFACE TYPE: <span class="text-amber-300">{orbitStatus.planetType}</span></div>
+				{/if}
 			</div>
 		</div>
 		<div class="text-right leading-relaxed text-cyan-300/90">
